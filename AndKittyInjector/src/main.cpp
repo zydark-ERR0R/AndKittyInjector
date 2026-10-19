@@ -13,6 +13,9 @@
 #include <chrono>
 #include <vector>
 
+#include <dirent.h>
+#include <iostream>
+
 #include "KittyMemoryMgr.hpp"
 
 #include "Utils/Utils.hpp"
@@ -130,34 +133,95 @@ int main(int argc, char *args[])
         .help("Remove soinfo from solist/sonext, remap library to anonymouse memory and randomize ELF header.")
         .store_into(inj_cfg.hide);
 
-    try
+    bool interactive = (argc == 1);
+
+    if (interactive)
     {
-        program.parse_args(argc, args);
+        std::string pkg;
+        std::cout << "Enter target package name: ";
+        std::getline(std::cin, pkg);
 
-        if ((inj_cfg.launch || inj_cfg.watch) && target_pid != 0)
+        if (pkg.empty())
         {
-            KITTY_LOGE("Can't use --pid with --launch or --watch");
+            std::cerr << "Package name cannot be empty." << std::endl;
             return 1;
         }
 
-        if (target_pid != 0 && inj_cfg.package.empty())
+        inj_cfg.package = pkg;
+
+        std::vector<std::string> found_libs;
+        DIR *dir = opendir("/data/local/tmp");
+        if (dir)
         {
-            inj_cfg.package = KittyMemoryEx::getProcessName(target_pid);
+            struct dirent *ent;
+            while ((ent = readdir(dir)) != nullptr)
+            {
+                std::string name = ent->d_name;
+                if (name.size() > 3 && name.substr(name.size() - 3) == ".so")
+                {
+                    found_libs.push_back("/data/local/tmp/" + name);
+                }
+            }
+            closedir(dir);
         }
 
-        if (!inj_cfg.memfd && !inj_cfg.memfd_name.empty())
+        if (found_libs.empty())
         {
-            KITTY_LOGE("--memfd-name requires --memfd to be enabled!");
+            std::cerr << "No .so files found in /data/local/tmp." << std::endl;
             return 1;
         }
 
-        inj_cfg.bp |= (inj_cfg.bp_args.size() == 2);
+        std::cout << "Libraries in /data/local/tmp:" << std::endl;
+        for (size_t i = 0; i < found_libs.size(); i++)
+        {
+            std::cout << "  " << (i + 1) << ". " << found_libs[i] << std::endl;
+        }
+
+        int choice = 0;
+        std::cout << "Select library number: ";
+        std::cin >> choice;
+
+        if (choice < 1 || choice > (int)found_libs.size())
+        {
+            std::cerr << "Invalid choice." << std::endl;
+            return 1;
+        }
+
+        libs.push_back(found_libs[choice - 1]);
+        inj_cfg.launch = true;
+        inj_cfg.memfd = true;
     }
-    catch (const std::exception &err)
+    else
     {
-        std::cerr << err.what() << std::endl;
-        std::cerr << program;
-        return 1;
+        try
+        {
+            program.parse_args(argc, args);
+
+            if ((inj_cfg.launch || inj_cfg.watch) && target_pid != 0)
+            {
+                KITTY_LOGE("Can't use --pid with --launch or --watch");
+                return 1;
+            }
+
+            if (target_pid != 0 && inj_cfg.package.empty())
+            {
+                inj_cfg.package = KittyMemoryEx::getProcessName(target_pid);
+            }
+
+            if (!inj_cfg.memfd && !inj_cfg.memfd_name.empty())
+            {
+                KITTY_LOGE("--memfd-name requires --memfd to be enabled!");
+                return 1;
+            }
+
+            inj_cfg.bp |= (inj_cfg.bp_args.size() == 2);
+        }
+        catch (const std::exception &err)
+        {
+            std::cerr << err.what() << std::endl;
+            std::cerr << program;
+            return 1;
+        }
     }
 
     KITTY_LOGI("======== INJECTION ARGS ========");
@@ -255,13 +319,8 @@ bool inject(int pid,
 
     KittyMemoryMgr kmgr{};
 
-    // Manually initialize tracer to seize and interrupt as soon as possible
     kmgr.trace = KittyTraceMgr(pid, 0, true);
 
-    // Stop only the main thread (seize + interrupt).
-    // A whole-process SIGSTOP would freeze a sibling that holds g_dl_mutex,
-    // after which our  remote dlopen on the main thread blocks forever on that lock.
-    // Leaving siblings running lets the lock holder finish and release it.
     errno = 0;
     bool attached = cfg.seize = cfg.sdk >= 21 && kmgr.trace.seize(PTRACE_O_EXITKILL | PTRACE_O_TRACESYSGOOD);
     if (!attached)
@@ -297,7 +356,6 @@ bool inject(int pid,
         return false;
     }
 
-    // After interrupting early, we can take our time to initialze the injector.
     KittyInjector injector{};
     if (!kmgr.initialize(pid, EK_MEM_OP_SYSCALL, true) || !injector.init(&kmgr, cfg))
     {
@@ -405,7 +463,7 @@ bool inject_watch(const std::vector<std::string> &libs, inject_elf_config_t &cfg
             if (!KittyMemoryEx::getProcessIDs(cfg.package).empty())
             {
                 Utils::android_stop_app(cfg.package);
-                SLEEP_SECONDS(1); // 1s settle after a force-stop
+                SLEEP_SECONDS(1);
             }
             if (cfg.launch && !Utils::android_launch_app(cfg.package))
             {
@@ -416,9 +474,7 @@ bool inject_watch(const std::vector<std::string> &libs, inject_elf_config_t &cfg
     };
 
     Utils::am_process_start_callback(
-        // init: monitor is live here, so stop/launch can't race the spawn event.
         [&] { launchFresh(); },
-        // process start callback
         [&](const android_event_am_proc_start *event) -> bool {
             if (int(cfg.package.length()) != event->process_name.length)
                 return false;
@@ -451,7 +507,7 @@ bool inject_watch(const std::vector<std::string> &libs, inject_elf_config_t &cfg
                     if (cfg.launch && ++launchTries <= 5)
                         launchFresh();
 
-                    return false; // keep monitoring for the next spawn
+                    return false;
                 }
 
                 if (cfg.selinux_state == SELinuxState::Disabled)
