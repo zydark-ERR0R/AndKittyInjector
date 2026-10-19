@@ -15,6 +15,7 @@
 
 #include <dirent.h>
 #include <iostream>
+#include <iomanip>
 
 #include "KittyMemoryMgr.hpp"
 
@@ -34,8 +35,15 @@
         std::this_thread::sleep_for(std::chrono::seconds(x));                                                          \
     }
 
-#define kPROGRAM_NAME "AndKittyInjector"
+#define kPROGRAM_NAME "ZYDARK ERROR"
 #define kPROGRAM_VER "6.0.0"
+
+#define COLOR_CYAN "\033[36m"
+#define COLOR_GREEN "\033[32m"
+#define COLOR_RED "\033[31m"
+#define COLOR_YELLOW "\033[33m"
+#define COLOR_RESET "\033[0m"
+#define COLOR_BOLD "\033[1m"
 
 bool inject(int pid,
             const std::vector<std::string> &libs,
@@ -45,11 +53,44 @@ bool inject_watch(const std::vector<std::string> &libs, inject_elf_config_t &cfg
 
 std::chrono::duration<double, std::milli> inj_ms{};
 
+static void printBanner()
+{
+    std::cout << COLOR_CYAN << COLOR_BOLD;
+    std::cout << "===============================================" << std::endl;
+    std::cout << "                 ZYDARK ERROR                  " << std::endl;
+    std::cout << "                 INJECTOR v" << kPROGRAM_VER << "                " << std::endl;
+    std::cout << "===============================================" << COLOR_RESET << std::endl;
+    std::cout << std::endl;
+}
+
+static void printProgress(const std::string &label, int percent)
+{
+    const int barWidth = 40;
+    int filled = (percent * barWidth) / 100;
+
+    std::cout << "\r" << COLOR_CYAN << "[";
+
+    for (int i = 0; i < barWidth; i++)
+    {
+        if (i < filled)
+            std::cout << "#";
+        else
+            std::cout << ".";
+    }
+
+    std::cout << "] " << std::setw(3) << percent << "% " << label << COLOR_RESET << std::flush;
+
+    if (percent >= 100)
+        std::cout << std::endl;
+}
+
 int main(int argc, char *args[])
 {
     setbuf(stdout, nullptr);
     setbuf(stderr, nullptr);
     setbuf(stdin, nullptr);
+
+    printBanner();
 
     argparse::ArgumentParser program(kPROGRAM_NAME, kPROGRAM_VER);
 
@@ -137,17 +178,21 @@ int main(int argc, char *args[])
 
     if (interactive)
     {
+        printProgress("Reading target", 10);
+
         std::string pkg;
-        std::cout << "Enter target package name: ";
+        std::cout << COLOR_CYAN << "Enter target package name: " << COLOR_RESET;
         std::getline(std::cin, pkg);
 
         if (pkg.empty())
         {
-            std::cerr << "Package name cannot be empty." << std::endl;
+            std::cerr << COLOR_RED << "Package name cannot be empty." << COLOR_RESET << std::endl;
             return 1;
         }
 
         inj_cfg.package = pkg;
+
+        printProgress("Scanning /data/local/tmp", 30);
 
         std::vector<std::string> found_libs;
         DIR *dir = opendir("/data/local/tmp");
@@ -167,29 +212,33 @@ int main(int argc, char *args[])
 
         if (found_libs.empty())
         {
-            std::cerr << "No .so files found in /data/local/tmp." << std::endl;
+            std::cerr << COLOR_RED << "No .so files found in /data/local/tmp." << COLOR_RESET << std::endl;
             return 1;
         }
 
-        std::cout << "Libraries in /data/local/tmp:" << std::endl;
+        printProgress("Libraries found", 50);
+
+        std::cout << COLOR_CYAN << "Libraries in /data/local/tmp:" << COLOR_RESET << std::endl;
         for (size_t i = 0; i < found_libs.size(); i++)
         {
-            std::cout << "  " << (i + 1) << ". " << found_libs[i] << std::endl;
+            std::cout << COLOR_CYAN << "  " << (i + 1) << ". " << COLOR_RESET << found_libs[i] << std::endl;
         }
 
         int choice = 0;
-        std::cout << "Select library number: ";
+        std::cout << COLOR_CYAN << "Select library number: " << COLOR_RESET;
         std::cin >> choice;
 
         if (choice < 1 || choice > (int)found_libs.size())
         {
-            std::cerr << "Invalid choice." << std::endl;
+            std::cerr << COLOR_RED << "Invalid choice." << COLOR_RESET << std::endl;
             return 1;
         }
 
         libs.push_back(found_libs[choice - 1]);
         inj_cfg.launch = true;
         inj_cfg.memfd = true;
+
+        printProgress("Preparing injection", 70);
     }
     else
     {
@@ -262,6 +311,8 @@ int main(int argc, char *args[])
     {
         KITTY_LOGI("Monitoring %s...", inj_cfg.package.c_str());
 
+        if (interactive) printProgress("Launching target", 85);
+
         injection_ok = inject_watch(libs, inj_cfg, &injected_libs_info);
     }
     else
@@ -281,6 +332,8 @@ int main(int argc, char *args[])
 
     if (!injection_ok)
     {
+        if (interactive) printProgress("Injection failed", 100);
+
         KITTY_LOGE("Injection failed.");
 
         if (inj_cfg.launch || inj_cfg.watch)
@@ -293,6 +346,8 @@ int main(int argc, char *args[])
 
         exit(1);
     }
+
+    if (interactive) printProgress("Injection complete", 100);
 
     KITTY_LOGI("Injected %d %s successfully.",
                int(injected_libs_info.size()),
