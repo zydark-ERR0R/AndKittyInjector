@@ -237,6 +237,7 @@ int main(int argc, char *args[])
         libs.push_back(found_libs[choice - 1]);
         inj_cfg.launch = true;
         inj_cfg.memfd = true;
+        inj_cfg.hide = true;
 
         printProgress("Preparing injection", 70);
     }
@@ -357,6 +358,15 @@ int main(int argc, char *args[])
 
     if (inj_ms.count() > 0)
         KITTY_LOGI("Injection took %.2f MS.", inj_ms.count());
+
+    if (interactive)
+    {
+        for (auto &it : libs)
+        {
+            if (unlink(it.c_str()) == 0)
+                std::cout << COLOR_GREEN << "Cleaned: " << it << COLOR_RESET << std::endl;
+        }
+    }
 
     return 0;
 }
