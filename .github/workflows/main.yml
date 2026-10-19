@@ -27,11 +27,11 @@ jobs:
     - name: Build with ndk-build
       run: |
         ndk-build \
-          NDK_PROJECT_PATH=. \
-          APP_BUILD_SCRIPT=Android.mk \
-          NDK_APPLICATION_MK=Application.mk \
-          NDK_OUT=obj \
-          NDK_LIBS_OUT=libs \
+          NDK_PROJECT_PATH=${{ github.workspace }}/AndKittyInjector \
+          APP_BUILD_SCRIPT=${{ github.workspace }}/AndKittyInjector/Android.mk \
+          NDK_APPLICATION_MK=${{ github.workspace }}/AndKittyInjector/Application.mk \
+          NDK_OUT=${{ github.workspace }}/obj \
+          NDK_LIBS_OUT=${{ github.workspace }}/libs \
           APP_ABI=arm64-v8a
       env:
         ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
