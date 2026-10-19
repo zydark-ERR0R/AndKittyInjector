@@ -5,7 +5,7 @@ KITTYMEMORY_SRC  = $(wildcard $(KITTYMEMORY_PATH)/*.cpp)
 
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := ZYDARK_error.sh
+LOCAL_MODULE := AndKittyInjector
 
 # add -DkITTYMEMORY_DEBUG for debug outputs
 # use logcat logging to get outputs in realtime
