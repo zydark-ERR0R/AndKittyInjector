@@ -136,42 +136,6 @@ static void printMask()
     std::cout << COLOR_RESET << std::endl;
 }
 
-static void animateTitle(const std::string &title, int width)
-{
-    int len = (int)title.length();
-    if (len >= width) width = len + 2;
-
-    for (int pos = 0; pos <= width - len; pos++)
-    {
-        std::string frame(width, ' ');
-        for (int i = 0; i < len; i++)
-            frame[pos + i] = title[i];
-
-        std::cout << "\r\033[K" << COLOR_CYAN << COLOR_BOLD
-                  << " " << frame << COLOR_RESET << std::flush;
-        std::this_thread::sleep_for(std::chrono::milliseconds(70));
-    }
-
-    for (int pos = width - len; pos >= 0; pos--)
-    {
-        std::string frame(width, ' ');
-        for (int i = 0; i < len; i++)
-            frame[pos + i] = title[i];
-
-        std::cout << "\r\033[K" << COLOR_CYAN << COLOR_BOLD
-                  << " " << frame << COLOR_RESET << std::flush;
-        std::this_thread::sleep_for(std::chrono::milliseconds(70));
-    }
-
-    std::string frame(width, ' ');
-    int center = (width - len) / 2;
-    for (int i = 0; i < len; i++)
-        frame[center + i] = title[i];
-
-    std::cout << "\r\033[K" << COLOR_CYAN << COLOR_BOLD
-              << " " << frame << COLOR_RESET << std::endl;
-}
-
 static void printBanner()
 {
     detect_terminal_width();
