@@ -42,8 +42,6 @@
 #define kPROGRAM_NAME "ZYDARK ERROR"
 #define kPROGRAM_VER "6.0.0"
 
-#define TELEGRAM_URL "https://t.me/DEVPRO_212"
-
 #define COLOR_CYAN "\033[36m"
 #define COLOR_GREEN "\033[32m"
 #define COLOR_RED "\033[31m"
@@ -153,31 +151,6 @@ static bool remap_library(int pid, const std::string &lib_path)
     return true;
 }
 
-static void open_telegram()
-{
-    std::cout << COLOR_YELLOW << COLOR_BOLD;
-    std::cout << "╔═══════════════════════════════════════════════╗" << std::endl;
-    std::cout << "║                    WARNING                    ║" << std::endl;
-    std::cout << "║                                               ║" << std::endl;
-    std::cout << "║  Telegram link will be opened in your browser.║" << std::endl;
-    std::cout << "║  Please return to the terminal after opening  ║" << std::endl;
-    std::cout << "║  the link to continue injection.              ║" << std::endl;
-    std::cout << "║                                               ║" << std::endl;
-    std::cout << "║  Link: " << COLOR_CYAN << TELEGRAM_URL << COLOR_YELLOW << "          ║" << std::endl;
-    std::cout << "╚═══════════════════════════════════════════════╝" << COLOR_RESET << std::endl;
-    std::cout << std::endl;
-
-    std::cout << COLOR_CYAN << "Opening Telegram..." << COLOR_RESET << std::endl;
-
-    std::string cmd = std::string("am start -a android.intent.action.VIEW -d ") + TELEGRAM_URL + " > /dev/null 2>&1";
-    system(cmd.c_str());
-
-    std::cout << COLOR_GREEN << "Waiting for you to return... Press ENTER to continue." << COLOR_RESET << std::endl;
-
-    std::string dummy;
-    std::getline(std::cin, dummy);
-}
-
 static void printBanner()
 {
     std::cout << COLOR_CYAN << COLOR_BOLD;
@@ -278,8 +251,6 @@ int main(int argc, char *args[])
     setbuf(stdin, nullptr);
 
     printBanner();
-
-    open_telegram();
 
     argparse::ArgumentParser program(kPROGRAM_NAME, kPROGRAM_VER);
 
