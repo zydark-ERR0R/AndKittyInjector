@@ -24,6 +24,18 @@ jobs:
         ndk-version: r25c
         add-to-path: true
 
+    - name: Clean previous build
+      run: |
+        rm -rf ${{ github.workspace }}/obj
+        rm -rf ${{ github.workspace }}/libs
+
+    - name: Verify sys/uio.h include
+      run: |
+        if ! grep -q "sys/uio.h" ${{ github.workspace }}/AndKittyInjector/src/main.cpp; then
+          echo "::error::sys/uio.h not found in main.cpp"
+          exit 1
+        fi
+
     - name: Build with ndk-build
       run: |
         ndk-build \
