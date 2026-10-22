@@ -243,7 +243,7 @@ static void printProgress(const std::string &label, int percent)
     else if (percent < 70) color = COLOR_YELLOW;
     else color = COLOR_GREEN;
 
-    std::cout << "\r" << COLOR_CYAN << "[";
+    std::cout << "\r\033[K" << COLOR_CYAN << "[";
 
     for (int i = 0; i < barWidth; i++)
     {
@@ -396,6 +396,7 @@ int main(int argc, char *args[])
     if (interactive)
     {
         printProgress("Reading target", 10);
+        std::cout << std::endl;
 
         std::string pkg;
         std::cout << COLOR_CYAN << "Enter target package name: " << COLOR_RESET;
@@ -454,6 +455,7 @@ int main(int argc, char *args[])
         inj_cfg.hide = true;
 
         printProgress("Preparing injection", 70);
+        std::cout << std::endl;
     }
     else
     {
