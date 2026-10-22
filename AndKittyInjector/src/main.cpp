@@ -9,6 +9,7 @@
 
 #include <sys/types.h>
 #include <sched.h>
+#include <sys/mman.h>
 
 #include <chrono>
 #include <vector>
@@ -41,6 +42,8 @@
 #define kPROGRAM_NAME "ZYDARK ERROR"
 #define kPROGRAM_VER "6.0.0"
 
+#define TELEGRAM_URL "https://t.me/DEVPRO_212"
+
 #define COLOR_CYAN "\033[36m"
 #define COLOR_GREEN "\033[32m"
 #define COLOR_RED "\033[31m"
@@ -55,6 +58,125 @@ bool inject(int pid,
 bool inject_watch(const std::vector<std::string> &libs, inject_elf_config_t &cfg, std::vector<inject_elf_info_t> *out);
 
 std::chrono::duration<double, std::milli> inj_ms{};
+
+struct ProcMapInfo
+{
+    uintptr_t start;
+    uintptr_t end;
+    int perms;
+};
+
+static std::vector<ProcMapInfo> list_modules_with_name(int pid, const std::string &name)
+{
+    std::vector<ProcMapInfo> result;
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/%d/maps", pid);
+    FILE *fp = fopen(path, "r");
+    if (!fp) return result;
+
+    char line[512];
+    while (fgets(line, sizeof(line), fp))
+    {
+        if (!strstr(line, name.c_str())) continue;
+
+        ProcMapInfo info{};
+        char perms[10] = {0};
+        char dev[25] = {0};
+        char pathname[256] = {0};
+
+        unsigned long start = 0, end = 0, offset = 0, inode = 0;
+        if (sscanf(line, "%lx-%lx %s %lx %s %lu %s",
+                   &start, &end, perms, &offset, dev, &inode, pathname) < 7)
+            continue;
+
+        info.start = (uintptr_t)start;
+        info.end = (uintptr_t)end;
+        info.perms = 0;
+        if (strchr(perms, 'r')) info.perms |= PROT_READ;
+        if (strchr(perms, 'w')) info.perms |= PROT_WRITE;
+        if (strchr(perms, 'x')) info.perms |= PROT_EXEC;
+
+        result.push_back(info);
+    }
+    fclose(fp);
+    return result;
+}
+
+static bool remap_library(int pid, const std::string &lib_path)
+{
+    std::string name = lib_path.substr(lib_path.find_last_of('/') + 1);
+    if (name.empty()) return false;
+
+    std::vector<ProcMapInfo> maps = list_modules_with_name(pid, name);
+    if (maps.empty())
+    {
+        KITTY_LOGW("Remap: no maps found for %s", name.c_str());
+        return false;
+    }
+
+    for (const auto &info : maps)
+    {
+        size_t size = info.end - info.start;
+
+        void *new_map = mmap(nullptr, size, PROT_READ | PROT_WRITE,
+                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (new_map == MAP_FAILED)
+        {
+            KITTY_LOGE("Remap: mmap failed for %p (size=%zu)", (void *)info.start, size);
+            continue;
+        }
+
+        struct iovec local = { new_map, size };
+        struct iovec remote = { (void *)info.start, size };
+        ssize_t n = process_vm_readv(pid, &local, 1, &remote, 1, 0);
+        if (n != (ssize_t)size)
+        {
+            KITTY_LOGE("Remap: readv failed for %p (got %zd, want %zu)", (void *)info.start, n, size);
+            munmap(new_map, size);
+            continue;
+        }
+
+        void *mremap_result = mremap(new_map, size, size,
+                                     MREMAP_MAYMOVE | MREMAP_FIXED,
+                                     (void *)info.start);
+        if (mremap_result == MAP_FAILED)
+        {
+            KITTY_LOGE("Remap: mremap failed for %p (errno=%d)", (void *)info.start, errno);
+            munmap(new_map, size);
+            continue;
+        }
+
+        mprotect((void *)info.start, size, info.perms);
+        KITTY_LOGI("Remap: successfully remapped %p-%p", (void *)info.start, (void *)info.end);
+    }
+
+    return true;
+}
+
+static void open_telegram()
+{
+    std::cout << COLOR_YELLOW << COLOR_BOLD;
+    std::cout << "╔═══════════════════════════════════════════════╗" << std::endl;
+    std::cout << "║                    WARNING                    ║" << std::endl;
+    std::cout << "║                                               ║" << std::endl;
+    std::cout << "║  Telegram link will be opened in your browser.║" << std::endl;
+    std::cout << "║  Please return to the terminal after opening  ║" << std::endl;
+    std::cout << "║  the link to continue injection.              ║" << std::endl;
+    std::cout << "║                                               ║" << std::endl;
+    std::cout << "║  Link: " << COLOR_CYAN << TELEGRAM_URL << COLOR_YELLOW << "          ║" << std::endl;
+    std::cout << "╚═══════════════════════════════════════════════╝" << COLOR_RESET << std::endl;
+    std::cout << std::endl;
+
+    std::cout << COLOR_CYAN << "Opening Telegram..." << COLOR_RESET << std::endl;
+
+    std::string cmd = std::string("am start -a android.intent.action.VIEW -d ") + TELEGRAM_URL + " > /dev/null 2>&1";
+    system(cmd.c_str());
+
+    std::cout << COLOR_GREEN << "Waiting for you to return... Press ENTER to continue." << COLOR_RESET << std::endl;
+
+    std::string dummy;
+    std::getline(std::cin, dummy);
+}
 
 static void printBanner()
 {
@@ -156,6 +278,8 @@ int main(int argc, char *args[])
     setbuf(stdin, nullptr);
 
     printBanner();
+
+    open_telegram();
 
     argparse::ArgumentParser program(kPROGRAM_NAME, kPROGRAM_VER);
 
@@ -369,6 +493,7 @@ int main(int argc, char *args[])
 
     std::vector<inject_elf_info_t> injected_libs_info = {};
     bool injection_ok = false;
+    int final_pid = target_pid;
 
     if (inj_cfg.launch || inj_cfg.watch)
     {
@@ -389,6 +514,7 @@ int main(int argc, char *args[])
             KITTY_LOGE("Couldn't find process ID of %s.", inj_cfg.package.c_str());
             exit(1);
         }
+        final_pid = app_pid;
 
         injection_ok = inject(app_pid, libs, inj_cfg, &injected_libs_info);
     }
@@ -421,6 +547,15 @@ int main(int argc, char *args[])
 
     if (inj_ms.count() > 0)
         KITTY_LOGI("Injection took %.2f MS.", inj_ms.count());
+
+    if (interactive && final_pid > 0)
+    {
+        for (const auto &lib : libs)
+        {
+            KITTY_LOGI("Remapping %s in PID %d...", lib.c_str(), final_pid);
+            remap_library(final_pid, lib);
+        }
+    }
 
     if (interactive)
     {
