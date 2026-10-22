@@ -43,8 +43,6 @@
 #define kPROGRAM_NAME "ZYDARK ERROR"
 #define kPROGRAM_VER "6.0.0"
 
-#define TELEGRAM_URL "https://t.me/DEVPRO_212"
-
 #define COLOR_CYAN "\033[36m"
 #define COLOR_GREEN "\033[32m"
 #define COLOR_RED "\033[31m"
@@ -154,29 +152,42 @@ static bool remap_library(int pid, const std::string &lib_path)
     return true;
 }
 
-static void open_telegram()
+static void animateTitle(const std::string &title, int width = 47)
 {
-    std::cout << COLOR_YELLOW << COLOR_BOLD;
-    std::cout << "╔═══════════════════════════════════════════════╗" << std::endl;
-    std::cout << "║                    WARNING                    ║" << std::endl;
-    std::cout << "║                                               ║" << std::endl;
-    std::cout << "║  Telegram link will be opened in your browser.║" << std::endl;
-    std::cout << "║  Please return to the terminal after opening  ║" << std::endl;
-    std::cout << "║  the link to continue injection.              ║" << std::endl;
-    std::cout << "║                                               ║" << std::endl;
-    std::cout << "║  Link: " << COLOR_CYAN << TELEGRAM_URL << COLOR_YELLOW << "          ║" << std::endl;
-    std::cout << "╚═══════════════════════════════════════════════╝" << COLOR_RESET << std::endl;
-    std::cout << std::endl;
+    int len = (int)title.length();
+    if (len >= width) return;
 
-    std::cout << COLOR_CYAN << "Opening Telegram..." << COLOR_RESET << std::endl;
+    std::string padded(width, ' ');
 
-    std::string cmd = std::string("am start -a android.intent.action.VIEW -d ") + TELEGRAM_URL + " > /dev/null 2>&1";
-    system(cmd.c_str());
+    for (int pos = 0; pos <= width - len; pos++)
+    {
+        std::string frame(width, ' ');
+        for (int i = 0; i < len; i++)
+            frame[pos + i] = title[i];
 
-    std::cout << COLOR_GREEN << "Waiting for you to return... Press ENTER to continue." << COLOR_RESET << std::endl;
+        std::cout << "\r" << COLOR_CYAN << COLOR_BOLD
+                  << "║" << frame << "║" << COLOR_RESET << std::flush;
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    }
 
-    std::string dummy;
-    std::getline(std::cin, dummy);
+    for (int pos = width - len; pos >= 0; pos--)
+    {
+        std::string frame(width, ' ');
+        for (int i = 0; i < len; i++)
+            frame[pos + i] = title[i];
+
+        std::cout << "\r" << COLOR_CYAN << COLOR_BOLD
+                  << "║" << frame << "║" << COLOR_RESET << std::flush;
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    }
+
+    std::string frame(width, ' ');
+    int center = (width - len) / 2;
+    for (int i = 0; i < len; i++)
+        frame[center + i] = title[i];
+
+    std::cout << "\r" << COLOR_CYAN << COLOR_BOLD
+              << "║" << frame << "║" << COLOR_RESET << std::endl;
 }
 
 static void printBanner()
@@ -184,7 +195,10 @@ static void printBanner()
     std::cout << COLOR_CYAN << COLOR_BOLD;
     std::cout << "╔═══════════════════════════════════════════════╗" << std::endl;
     std::cout << "║                                               ║" << std::endl;
-    std::cout << "║              ZYDARK ERROR INJECTOR            ║" << std::endl;
+
+    animateTitle("ZYDARK INJECTOR");
+
+    std::cout << "║                                               ║" << std::endl;
     std::cout << "║                   v" << kPROGRAM_VER << "                      ║" << std::endl;
     std::cout << "║                                               ║" << std::endl;
     std::cout << "╚═══════════════════════════════════════════════╝" << COLOR_RESET << std::endl;
@@ -279,8 +293,6 @@ int main(int argc, char *args[])
     setbuf(stdin, nullptr);
 
     printBanner();
-
-    open_telegram();
 
     argparse::ArgumentParser program(kPROGRAM_NAME, kPROGRAM_VER);
 
