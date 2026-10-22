@@ -157,8 +157,6 @@ static void animateTitle(const std::string &title, int width = 47)
     int len = (int)title.length();
     if (len >= width) return;
 
-    std::string padded(width, ' ');
-
     for (int pos = 0; pos <= width - len; pos++)
     {
         std::string frame(width, ' ');
