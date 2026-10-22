@@ -1,3 +1,7 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <cstring>
 #include <signal.h>
 #include <thread>
@@ -11,6 +15,7 @@
 #include <sched.h>
 #include <sys/mman.h>
 #include <sys/uio.h>
+#include <sys/syscall.h>
 
 #include <chrono>
 #include <vector>
@@ -30,6 +35,18 @@
 #include "Utils/argsparse.hpp"
 
 #include "Injector/KittyInjector.hpp"
+
+#ifndef __NR_process_vm_readv
+#define __NR_process_vm_readv 270
+#endif
+
+static ssize_t process_vm_readv(pid_t pid,
+                                const struct iovec *local_iov, unsigned long liovcnt,
+                                const struct iovec *remote_iov, unsigned long riovcnt,
+                                unsigned long flags)
+{
+    return syscall(__NR_process_vm_readv, pid, local_iov, liovcnt, remote_iov, riovcnt, flags);
+}
 
 #define SLEEP_MICROS(x)                                                                                                \
     {                                                                                                                  \
