@@ -21,6 +21,8 @@
 #include <chrono>
 #include <vector>
 #include <ctime>
+#include <fstream>
+#include <sstream>
 
 #include <dirent.h>
 #include <iostream>
@@ -69,6 +71,8 @@ static ssize_t process_vm_readv(pid_t pid,
 #define COLOR_RESET "\033[0m"
 #define COLOR_BOLD "\033[1m"
 
+#define LOG_FILE "/data/local/tmp/zydark_loader.log"
+
 bool inject(int pid,
             const std::vector<std::string> &libs,
             inject_elf_config_t &cfg,
@@ -78,6 +82,19 @@ bool inject_watch(const std::vector<std::string> &libs, inject_elf_config_t &cfg
 std::chrono::duration<double, std::milli> inj_ms{};
 
 static int g_term_width = 60;
+
+static void log_to_file(const std::string &msg)
+{
+    std::ofstream f(LOG_FILE, std::ios::app);
+    if (!f.is_open()) return;
+
+    time_t now = std::time(nullptr);
+    char time_buf[64] = {0};
+    strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", localtime(&now));
+
+    f << "[" << time_buf << "] " << msg << std::endl;
+    f.close();
+}
 
 static void detect_terminal_width()
 {
@@ -127,6 +144,9 @@ static void printProgress(const std::string &label, int percent)
 
     int filled = (percent * barWidth) / 100;
 
+    static const char *spinner[] = {"|", "/", "-", "\\"};
+    static int spin_idx = 0;
+
     const char* color;
     if (percent < 30) color = COLOR_RED;
     else if (percent < 70) color = COLOR_YELLOW;
@@ -142,12 +162,14 @@ static void printProgress(const std::string &label, int percent)
             std::cout << COLOR_DIM << "─" << COLOR_RESET;
     }
 
-    std::cout << COLOR_DIM << "] " << COLOR_RESET
-              << color << std::setw(3) << percent << "%" << COLOR_RESET
-              << "  " << COLOR_DIM << label << COLOR_RESET << std::flush;
-
-    if (percent >= 100)
-        std::cout << std::endl;
+    if (percent < 100)
+        std::cout << COLOR_DIM << "] " << COLOR_RESET << color << spinner[spin_idx++ % 4] << " " << COLOR_RESET
+                  << color << std::setw(3) << percent << "%" << COLOR_RESET
+                  << "  " << COLOR_DIM << label << COLOR_RESET << std::flush;
+    else
+        std::cout << COLOR_DIM << "] " << COLOR_RESET
+                  << color << std::setw(3) << percent << "%" << COLOR_RESET
+                  << "  " << COLOR_DIM << label << COLOR_RESET << std::endl;
 }
 
 static void printLibraryTable(const std::vector<std::string> &libs)
@@ -186,13 +208,78 @@ static void printSummary(bool success, int count, double ms)
         std::cout << "  " << COLOR_GREEN << "Libraries " << COLOR_DIM << "│ " << COLOR_RESET << count << std::endl;
         std::cout << "  " << COLOR_GREEN << "Time      " << COLOR_DIM << "│ " << COLOR_RESET
                   << std::fixed << std::setprecision(2) << ms << " ms" << std::endl;
+        log_to_file("SUCCESS | Libraries: " + std::to_string(count) + " | Time: " + std::to_string(ms) + "ms");
     }
     else
     {
         std::cout << "  " << COLOR_RED << COLOR_BOLD << "✕  INJECTION FAILED" << COLOR_RESET << std::endl;
+        log_to_file("FAILED");
     }
     std::cout << "  " << COLOR_DIM << "──────────────────────────────────────" << COLOR_RESET << std::endl;
     std::cout << std::endl;
+}
+
+static bool check_tracer_pid(int pid)
+{
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/%d/status", pid);
+    std::ifstream f(path);
+    if (!f.is_open()) return false;
+
+    std::string line;
+    while (std::getline(f, line))
+    {
+        if (line.compare(0, 9, "TracerPid") == 0)
+        {
+            int tracer = 0;
+            sscanf(line.c_str(), "TracerPid:\t%d", &tracer);
+            f.close();
+            return tracer == 0;
+        }
+    }
+    f.close();
+    return true;
+}
+
+static uint64_t hash_file(const std::string &path)
+{
+    std::ifstream f(path, std::ios::binary);
+    if (!f.is_open()) return 0;
+
+    uint64_t hash = 14695981039346656037ULL;
+    char buf[8192];
+    while (f.read(buf, sizeof(buf)) || f.gcount() > 0)
+    {
+        std::streamsize n = f.gcount();
+        for (std::streamsize i = 0; i < n; i++)
+        {
+            hash ^= (uint8_t)buf[i];
+            hash *= 1099511628211ULL;
+        }
+    }
+    f.close();
+    return hash;
+}
+
+static bool check_abi(const std::string &lib_path)
+{
+    std::ifstream f(lib_path, std::ios::binary);
+    if (!f.is_open()) return false;
+
+    unsigned char ident[20] = {0};
+    f.read((char*)ident, 20);
+    f.close();
+
+    if (ident[0] != 0x7f || ident[1] != 'E' || ident[2] != 'L' || ident[3] != 'F')
+        return false;
+
+    uint8_t ei_class = ident[4];
+    uint8_t ei_data = ident[5];
+
+    if (ei_class != 2) return false;
+    if (ei_data != 1) return false;
+
+    return true;
 }
 
 struct ProcMapInfo
@@ -297,6 +384,8 @@ int main(int argc, char *args[])
 
     printBanner();
 
+    log_to_file("=== ZYDARK LOADER STARTED ===");
+
     argparse::ArgumentParser program(kPROGRAM_NAME, kPROGRAM_VER);
 
     int target_pid = 0;
@@ -393,10 +482,12 @@ int main(int argc, char *args[])
         if (pkg.empty())
         {
             std::cout << "  " << COLOR_RED << "✕ " << COLOR_RESET << "Package name cannot be empty" << std::endl;
+            log_to_file("FAILED: empty package name");
             return 1;
         }
 
         inj_cfg.package = pkg;
+        log_to_file("Target package: " + pkg);
 
         printProgress("Scanning", 30);
 
@@ -419,6 +510,7 @@ int main(int argc, char *args[])
         if (found_libs.empty())
         {
             std::cout << "  " << COLOR_RED << "✕ " << COLOR_RESET << "No .so files found" << std::endl;
+            log_to_file("FAILED: no .so files found");
             return 1;
         }
 
@@ -432,10 +524,27 @@ int main(int argc, char *args[])
         if (choice < 1 || choice > (int)found_libs.size())
         {
             std::cout << "  " << COLOR_RED << "✕ " << COLOR_RESET << "Invalid choice" << std::endl;
+            log_to_file("FAILED: invalid library choice");
             return 1;
         }
 
-        libs.push_back(found_libs[choice - 1]);
+        std::string selected_lib = found_libs[choice - 1];
+
+        printProgress("Validating ABI", 55);
+        if (!check_abi(selected_lib))
+        {
+            std::cout << "  " << COLOR_RED << "✕ " << COLOR_RESET << "Invalid ABI (need arm64-v8a ELF)" << std::endl;
+            log_to_file("FAILED: invalid ABI for " + selected_lib);
+            return 1;
+        }
+
+        printProgress("Hashing library", 60);
+        uint64_t lib_hash = hash_file(selected_lib);
+        std::cout << "  " << COLOR_DIM << "Hash: " << COLOR_RESET
+                  << std::hex << std::uppercase << lib_hash << std::dec << std::endl;
+        log_to_file("Library: " + selected_lib + " | Hash: " + std::to_string(lib_hash));
+
+        libs.push_back(selected_lib);
         inj_cfg.launch = true;
         inj_cfg.memfd = true;
         inj_cfg.hide = true;
@@ -473,6 +582,15 @@ int main(int argc, char *args[])
             std::cerr << err.what() << std::endl;
             std::cerr << program;
             return 1;
+        }
+
+        for (auto &lib : libs)
+        {
+            if (!check_abi(lib))
+            {
+                KITTY_LOGE("Invalid ABI: %s", lib.c_str());
+                return 1;
+            }
         }
     }
 
@@ -528,9 +646,16 @@ int main(int argc, char *args[])
         if (app_pid <= 0)
         {
             KITTY_LOGE("Couldn't find process ID of %s.", inj_cfg.package.c_str());
+            log_to_file("FAILED: process not found");
             exit(1);
         }
         final_pid = app_pid;
+
+        if (!check_tracer_pid(app_pid))
+        {
+            std::cout << "  " << COLOR_YELLOW << "⚠ " << COLOR_RESET << "Process is already traced!" << std::endl;
+            log_to_file("WARNING: process " + std::to_string(app_pid) + " already traced");
+        }
 
         injection_ok = inject(app_pid, libs, inj_cfg, &injected_libs_info);
     }
@@ -763,6 +888,12 @@ bool inject_watch(const std::vector<std::string> &libs, inject_elf_config_t &cfg
             {
                 KITTY_LOGI("Waiting for the delay...");
                 SLEEP_MICROS(cfg.delay);
+            }
+
+            if (!check_tracer_pid(pid))
+            {
+                KITTY_LOGW("Process %d is already traced!", pid);
+                log_to_file("WARNING: process " + std::to_string(pid) + " already traced");
             }
 
             auto spec_begin = std::chrono::steady_clock::now();
