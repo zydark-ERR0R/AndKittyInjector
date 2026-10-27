@@ -58,13 +58,14 @@ static ssize_t process_vm_readv(pid_t pid,
         std::this_thread::sleep_for(std::chrono::seconds(x));                                                          \
     }
 
-#define kPROGRAM_NAME "ZYDARK ERROR"
+#define kPROGRAM_NAME "ZYDARK LOADER"
 #define kPROGRAM_VER "6.0.0"
 
 #define COLOR_CYAN "\033[36m"
 #define COLOR_GREEN "\033[32m"
 #define COLOR_RED "\033[31m"
 #define COLOR_YELLOW "\033[33m"
+#define COLOR_DIM "\033[2m"
 #define COLOR_RESET "\033[0m"
 #define COLOR_BOLD "\033[1m"
 
@@ -93,58 +94,9 @@ static void detect_terminal_width()
     if (g_term_width < 30) g_term_width = 30;
 }
 
-static const char* ANONYMOUS_MASK[] = {
-    "         .-=+*#%%@@@@%%#*+=-.",
-    "      .+#@@@@@@@@@@@@@@@@@@@@#=.",
-    "     *@@@@@@@@@@@@@@@@@@@@@@@@@@*.",
-    "    +@@@@@@@@@@@@@@@@@@@@@@@@@@@@+",
-    "    *@@@@@@@@@@@@@@@@@@@@@@@@@@@@*",
-    "    +@@@@@@@@@@@@@@@@@@@@@@@@@@@@+",
-    "    *@@@@@%#*+=-::-=+*#%@@@@@@@@@*",
-    "    +@@@@#-.         .:-#@@@@@@@@+",
-    "    *@@@#.   :=+**+=:   .#@@@@@@@*",
-    "    *@@%   -#@@@@@@@#-   %@@@@@@@*",
-    "    *@@*  +@@@@@@@@@@@+  *@@@@@@@*",
-    "    *@@*  #@@@@@@@@@@@#  *@@@@@@@*",
-    "    *@@@*  =#@@@@@@@#=  +@@@@@@@@*",
-    "    +@@@@#:.  .:-==-:. .:#@@@@@@@*",
-    "    *@@@@@@%*+=-::::-=+*%@@@@@@@@*",
-    "    *@@@@@@@@@@@@@@@@@@@@@@@@@@@@*",
-    "    +@@@@@@@@@@@@@@@@@@@@@@@@@@@@+",
-    "    *@@@@@@@@@@@@@@@@@@@@@@@@@@@@*",
-    "     *@@@@@@@@@@@@@@@@@@@@@@@@@@*",
-    "      .+#@@@@@@@@@@@@@@@@@@@@#=.",
-    "         .-=+*#%%@@@@%%#*+=-."
-};
-
-static int mask_line_count()
-{
-    return (int)(sizeof(ANONYMOUS_MASK) / sizeof(ANONYMOUS_MASK[0]));
-}
-
-static void printMask()
-{
-    int left_pad = (g_term_width - 40) / 2;
-    if (left_pad < 0) left_pad = 0;
-
-    std::string pad(left_pad, ' ');
-    std::cout << COLOR_CYAN << COLOR_BOLD;
-    for (int i = 0; i < mask_line_count(); i++)
-    {
-        std::cout << pad << ANONYMOUS_MASK[i] << std::endl;
-    }
-    std::cout << COLOR_RESET << std::endl;
-}
-
 static void printBanner()
 {
     detect_terminal_width();
-
-    printMask();
-
-    std::cout << COLOR_CYAN << COLOR_BOLD;
-    std::cout << "  ZYDARK INJECTOR  v" << kPROGRAM_VER << COLOR_RESET << std::endl;
-    std::cout << std::endl;
 
     char model[256] = {0};
     __system_property_get("ro.product.model", model);
@@ -155,17 +107,23 @@ static void printBanner()
     char time_buf[64] = {0};
     strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", localtime(&now));
 
-    std::cout << COLOR_GREEN << "  Device  : " << COLOR_RESET << model << std::endl;
-    std::cout << COLOR_GREEN << "  Android : " << COLOR_RESET << android_ver << std::endl;
-    std::cout << COLOR_GREEN << "  Time    : " << COLOR_RESET << time_buf << std::endl;
+    std::cout << COLOR_DIM << "  ──────────────────────────────────────" << COLOR_RESET << std::endl;
+    std::cout << "  " << COLOR_CYAN << COLOR_BOLD << "ZYDARK LOADER" << COLOR_RESET
+              << COLOR_DIM << "  v" << kPROGRAM_VER << COLOR_RESET << std::endl;
+    std::cout << COLOR_DIM << "  ──────────────────────────────────────" << COLOR_RESET << std::endl;
+    std::cout << std::endl;
+
+    std::cout << "  " << COLOR_GREEN << "Device " << COLOR_DIM << "│ " << COLOR_RESET << model << std::endl;
+    std::cout << "  " << COLOR_GREEN << "Android" << COLOR_DIM << " │ " << COLOR_RESET << android_ver << std::endl;
+    std::cout << "  " << COLOR_GREEN << "Time   " << COLOR_DIM << "│ " << COLOR_RESET << time_buf << std::endl;
     std::cout << std::endl;
 }
 
 static void printProgress(const std::string &label, int percent)
 {
-    int barWidth = g_term_width - 20;
+    int barWidth = g_term_width - 25;
     if (barWidth < 10) barWidth = 10;
-    if (barWidth > 50) barWidth = 50;
+    if (barWidth > 45) barWidth = 45;
 
     int filled = (percent * barWidth) / 100;
 
@@ -174,17 +132,19 @@ static void printProgress(const std::string &label, int percent)
     else if (percent < 70) color = COLOR_YELLOW;
     else color = COLOR_GREEN;
 
-    std::cout << "\r\033[K" << COLOR_CYAN << "[";
+    std::cout << "\r\033[K  " << COLOR_DIM << "[" << COLOR_RESET;
 
     for (int i = 0; i < barWidth; i++)
     {
         if (i < filled)
-            std::cout << color << "█" << COLOR_CYAN;
+            std::cout << color << "▬" << COLOR_RESET;
         else
-            std::cout << "░";
+            std::cout << COLOR_DIM << "─" << COLOR_RESET;
     }
 
-    std::cout << "] " << std::setw(3) << percent << "% " << label << COLOR_RESET << std::flush;
+    std::cout << COLOR_DIM << "] " << COLOR_RESET
+              << color << std::setw(3) << percent << "%" << COLOR_RESET
+              << "  " << COLOR_DIM << label << COLOR_RESET << std::flush;
 
     if (percent >= 100)
         std::cout << std::endl;
@@ -192,43 +152,46 @@ static void printProgress(const std::string &label, int percent)
 
 static void printLibraryTable(const std::vector<std::string> &libs)
 {
-    std::cout << COLOR_CYAN << "┌────┬──────────────────────────────────────┬──────────┐" << COLOR_RESET << std::endl;
-    std::cout << COLOR_CYAN << "│ #  │ Library Name                         │ Size     │" << COLOR_RESET << std::endl;
-    std::cout << COLOR_CYAN << "├────┼──────────────────────────────────────┼──────────┤" << COLOR_RESET << std::endl;
+    std::cout << std::endl;
+    std::cout << "  " << COLOR_DIM << "┌────┬────────────────────────────────┬──────────┐" << COLOR_RESET << std::endl;
+    std::cout << "  " << COLOR_DIM << "│ " << COLOR_CYAN << "#  " << COLOR_DIM << "│ "
+              << COLOR_CYAN << "Library                        " << COLOR_DIM << "│ "
+              << COLOR_CYAN << "Size     " << COLOR_DIM << "│" << COLOR_RESET << std::endl;
+    std::cout << "  " << COLOR_DIM << "├────┼────────────────────────────────┼──────────┤" << COLOR_RESET << std::endl;
 
     for (size_t i = 0; i < libs.size(); i++)
     {
         struct stat st;
         stat(libs[i].c_str(), &st);
         std::string name = libs[i].substr(libs[i].find_last_of('/') + 1);
-        if (name.length() > 36) name = name.substr(0, 33) + "...";
+        if (name.length() > 30) name = name.substr(0, 27) + "...";
 
-        std::cout << COLOR_CYAN << "│ " << std::setw(2) << (i + 1) << " │ "
-                  << COLOR_RESET << std::setw(36) << std::left << name
-                  << COLOR_CYAN << " │ " << COLOR_RESET << std::setw(8) << st.st_size << " │" << std::endl;
+        std::cout << "  " << COLOR_DIM << "│ " << COLOR_CYAN << std::setw(2) << (i + 1) << " " << COLOR_DIM << "│ "
+                  << COLOR_RESET << std::setw(30) << std::left << name << " "
+                  << COLOR_DIM << "│ " << COLOR_RESET << std::setw(8) << st.st_size << " "
+                  << COLOR_DIM << "│" << COLOR_RESET << std::endl;
     }
-    std::cout << COLOR_CYAN << "└────┴──────────────────────────────────────┴──────────┘" << COLOR_RESET << std::endl;
+    std::cout << "  " << COLOR_DIM << "└────┴────────────────────────────────┴──────────┘" << COLOR_RESET << std::endl;
+    std::cout << std::endl;
 }
 
 static void printSummary(bool success, int count, double ms)
 {
     std::cout << std::endl;
+    std::cout << "  " << COLOR_DIM << "──────────────────────────────────────" << COLOR_RESET << std::endl;
     if (success)
     {
-        std::cout << COLOR_GREEN << COLOR_BOLD;
-        std::cout << "╔═══════════════════════════════════════════════╗" << std::endl;
-        std::cout << "║              INJECTION SUCCESSFUL             ║" << std::endl;
-        std::cout << "╚═══════════════════════════════════════════════╝" << COLOR_RESET << std::endl;
-        std::cout << COLOR_GREEN << "  Libraries : " << COLOR_RESET << count << std::endl;
-        std::cout << COLOR_GREEN << "  Time      : " << COLOR_RESET << std::fixed << std::setprecision(2) << ms << " ms" << std::endl;
+        std::cout << "  " << COLOR_GREEN << COLOR_BOLD << "✓  INJECTION SUCCESSFUL" << COLOR_RESET << std::endl;
+        std::cout << std::endl;
+        std::cout << "  " << COLOR_GREEN << "Libraries " << COLOR_DIM << "│ " << COLOR_RESET << count << std::endl;
+        std::cout << "  " << COLOR_GREEN << "Time      " << COLOR_DIM << "│ " << COLOR_RESET
+                  << std::fixed << std::setprecision(2) << ms << " ms" << std::endl;
     }
     else
     {
-        std::cout << COLOR_RED << COLOR_BOLD;
-        std::cout << "╔═══════════════════════════════════════════════╗" << std::endl;
-        std::cout << "║               INJECTION FAILED                ║" << std::endl;
-        std::cout << "╚═══════════════════════════════════════════════╝" << COLOR_RESET << std::endl;
+        std::cout << "  " << COLOR_RED << COLOR_BOLD << "✕  INJECTION FAILED" << COLOR_RESET << std::endl;
     }
+    std::cout << "  " << COLOR_DIM << "──────────────────────────────────────" << COLOR_RESET << std::endl;
     std::cout << std::endl;
 }
 
@@ -424,18 +387,18 @@ int main(int argc, char *args[])
         std::cout << std::endl;
 
         std::string pkg;
-        std::cout << COLOR_CYAN << "Enter target package name: " << COLOR_RESET;
+        std::cout << "  " << COLOR_CYAN << "› " << COLOR_RESET << "Package: ";
         std::getline(std::cin, pkg);
 
         if (pkg.empty())
         {
-            std::cerr << COLOR_RED << "Package name cannot be empty." << COLOR_RESET << std::endl;
+            std::cout << "  " << COLOR_RED << "✕ " << COLOR_RESET << "Package name cannot be empty" << std::endl;
             return 1;
         }
 
         inj_cfg.package = pkg;
 
-        printProgress("Scanning /data/local/tmp", 30);
+        printProgress("Scanning", 30);
 
         std::vector<std::string> found_libs;
         DIR *dir = opendir("/data/local/tmp");
@@ -455,22 +418,20 @@ int main(int argc, char *args[])
 
         if (found_libs.empty())
         {
-            std::cerr << COLOR_RED << "No .so files found in /data/local/tmp." << COLOR_RESET << std::endl;
+            std::cout << "  " << COLOR_RED << "✕ " << COLOR_RESET << "No .so files found" << std::endl;
             return 1;
         }
 
         printProgress("Libraries found", 50);
-        std::cout << std::endl;
         printLibraryTable(found_libs);
-        std::cout << std::endl;
 
         int choice = 0;
-        std::cout << COLOR_CYAN << "Select library number: " << COLOR_RESET;
+        std::cout << "  " << COLOR_CYAN << "› " << COLOR_RESET << "Select: ";
         std::cin >> choice;
 
         if (choice < 1 || choice > (int)found_libs.size())
         {
-            std::cerr << COLOR_RED << "Invalid choice." << COLOR_RESET << std::endl;
+            std::cout << "  " << COLOR_RED << "✕ " << COLOR_RESET << "Invalid choice" << std::endl;
             return 1;
         }
 
@@ -479,7 +440,7 @@ int main(int argc, char *args[])
         inj_cfg.memfd = true;
         inj_cfg.hide = true;
 
-        printProgress("Preparing injection", 70);
+        printProgress("Preparing", 70);
         std::cout << std::endl;
     }
     else
@@ -554,7 +515,7 @@ int main(int argc, char *args[])
     {
         KITTY_LOGI("Monitoring %s...", inj_cfg.package.c_str());
 
-        if (interactive) printProgress("Launching target", 85);
+        if (interactive) printProgress("Launching", 85);
 
         injection_ok = inject_watch(libs, inj_cfg, &injected_libs_info);
     }
@@ -576,7 +537,7 @@ int main(int argc, char *args[])
 
     if (!injection_ok)
     {
-        if (interactive) printProgress("Injection failed", 100);
+        if (interactive) printProgress("Failed", 100);
 
         KITTY_LOGE("Injection failed.");
 
@@ -592,7 +553,7 @@ int main(int argc, char *args[])
         exit(1);
     }
 
-    if (interactive) printProgress("Injection complete", 100);
+    if (interactive) printProgress("Complete", 100);
 
     KITTY_LOGI("Injected %d %s successfully.",
                int(injected_libs_info.size()),
