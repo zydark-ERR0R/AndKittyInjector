@@ -521,7 +521,7 @@ static bool detect_hooks_in_lib(int pid, const std::vector<std::string> &ac_libs
                 uint32_t ins = *(uint32_t *)(buf.data() + i);
                 if ((ins & 0xFFFF0000) == 0x58000000 ||
                     (ins & 0xFFFF0000) == 0x18000000 ||
-                    (ins & 0xFFE0001F) == 0xD61F0000) {
+                    (ins & 0xFFFFFC1F) == 0xD61F0000) {
                     found = true;
                     break;
                 }
