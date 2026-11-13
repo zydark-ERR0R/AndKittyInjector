@@ -809,6 +809,14 @@ int main(int argc, char *args[])
                 return 1;
             }
 
+            if (g_experimental_hide && inj_cfg.memfd && inj_cfg.memfd_name.empty())
+            {
+                std::string randomized;
+                randomize_memfd_name(randomized);
+                inj_cfg.memfd_name = randomized;
+                KITTY_LOGI("Experimental hide: memfd name randomized to %s", inj_cfg.memfd_name.c_str());
+            }
+
             inj_cfg.bp |= (inj_cfg.bp_args.size() == 2);
         }
         catch (const std::exception &err)
