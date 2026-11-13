@@ -463,8 +463,7 @@ static bool detect_anticheat(int pid, const std::vector<std::string> &ac_libs)
         auto maps = KittyMemoryEx::getMaps(pid, EProcMapFilter::Contains, lib);
         if (!maps.empty()) {
             std::cout << "  " << COLOR_YELLOW << "⚠ " << COLOR_RESET
-                      << "Anti-cheat detected: " << COLOR_DIM << lib << COLOR_RESET
-                      << " @ " << maps[0].startAddress << std::endl;
+                      << "Anti-cheat detected: " << COLOR_DIM << lib << COLOR_RESET << std::endl;
             KITTY_LOGW("Anti-cheat detected: %s (pid=%d)", lib.c_str(), pid);
             log_to_file("ANTICHEAT DETECTED: " + lib + " in pid " + std::to_string(pid));
             found = true;
@@ -511,7 +510,6 @@ static bool detect_hooks_in_lib(int pid, const std::vector<std::string> &ac_libs
     for (const auto &lib : ac_libs) {
         auto maps = KittyMemoryEx::getMaps(pid, EProcMapFilter::Contains, lib);
         for (const auto &m : maps) {
-            if (!(m.perms & PROT_EXEC)) continue;
             size_t size = m.endAddress - m.startAddress;
             if (size == 0 || size > 0x100000) continue;
             std::vector<uint8_t> buf(size);
@@ -551,48 +549,10 @@ static void randomize_memfd_name(std::string &name)
     name = candidates[dist(rng)];
 }
 
-static void randomize_library_mappings(int pid, const std::string &lib)
-{
-    std::string name = lib.substr(lib.find_last_of('/') + 1);
-    std::vector<ProcMapInfo> maps = list_modules_with_name(pid, name);
-    if (maps.empty()) return;
-
-    std::mt19937 rng(std::random_device{}());
-    for (const auto &m : maps) {
-        size_t size = m.end - m.start;
-        if (size == 0) continue;
-        std::uniform_int_distribution<uintptr_t> addr_dist(0x10000000, 0x70000000);
-        void *hint = (void *)(addr_dist(rng) & ~0xFFF);
-        void *p = mmap(hint, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-        if (p != MAP_FAILED && p != hint) {
-            munmap(p, size);
-        }
-    }
-}
-
-static bool try_reset_tracerpid(int pid)
-{
-    char path[64];
-    snprintf(path, sizeof(path), "/proc/%d/status", pid);
-    std::ifstream in(path);
-    if (!in.is_open()) return false;
-    std::string content((std::istreambuf_iterator<char>(in)),
-                        std::istreambuf_iterator<char>());
-    in.close();
-    size_t pos = content.find("TracerPid:");
-    if (pos == std::string::npos) return false;
-    size_t end = content.find('\n', pos);
-    if (end == std::string::npos) return false;
-    return true;
-}
-
-static void print_tip(const std::string &msg)
-{
-    std::cout << "  " << COLOR_DIM << "› " << COLOR_RESET << COLOR_DIM << msg << COLOR_RESET << std::endl;
-}
-
 int main(int argc, char *args[])
 {
+    (void)args;
+
     setbuf(stdout, nullptr);
     setbuf(stderr, nullptr);
     setbuf(stdin, nullptr);
@@ -684,22 +644,10 @@ int main(int argc, char *args[])
         .implicit_value(true);
 
     program.add_argument("--experimental-hide")
-        .help("Enable experimental hiding (randomize memfd names, memory mappings).")
+        .help("Enable experimental hiding (randomize memfd names).")
         .store_into(g_experimental_hide)
         .default_value(false)
         .implicit_value(true);
-
-    program.add_argument("--retry")
-        .help("Number of retry attempts on injection failure.")
-        .store_into(inj_cfg.timeout)
-        .default_value(0)
-        .metavar("<n>");
-
-    program.add_argument("--retry-delay")
-        .help("Delay between retries in milliseconds.")
-        .store_into(inj_cfg.delay)
-        .default_value(1000)
-        .metavar("<ms>");
 
     program.add_argument("--output-json")
         .help("Output structured JSON result to file.")
@@ -748,7 +696,6 @@ int main(int argc, char *args[])
         std::string pkg;
         if (mode == 2 && has_saved) {
             pkg = saved_pkg;
-            print_tip("Using saved package: " + pkg);
         } else {
             std::cout << "  " << COLOR_CYAN << "› " << COLOR_RESET << "Package: ";
             std::getline(std::cin, pkg);
@@ -797,7 +744,6 @@ int main(int argc, char *args[])
             std::ifstream t(saved_lib);
             if (t.good()) {
                 selected_lib = saved_lib;
-                print_tip("Using saved library: " + selected_lib);
             }
             t.close();
         }
@@ -833,4 +779,415 @@ int main(int argc, char *args[])
         save_state(pkg, selected_lib);
 
         libs.push_back(selected_lib);
-        inj_cfg.la
+        inj_cfg.launch = true;
+        inj_cfg.memfd = true;
+        inj_cfg.hide = true;
+
+        printProgress("Preparing", 70);
+        std::cout << std::endl;
+    }
+    else
+    {
+        try
+        {
+            program.parse_args(argc, args);
+
+            if ((inj_cfg.launch || inj_cfg.watch) && target_pid != 0)
+            {
+                KITTY_LOGE("Can't use --pid with --launch or --watch");
+                return 1;
+            }
+
+            if (target_pid != 0 && inj_cfg.package.empty())
+            {
+                inj_cfg.package = KittyMemoryEx::getProcessName(target_pid);
+            }
+
+            if (!inj_cfg.memfd && !inj_cfg.memfd_name.empty())
+            {
+                KITTY_LOGE("--memfd-name requires --memfd to be enabled!");
+                return 1;
+            }
+
+            inj_cfg.bp |= (inj_cfg.bp_args.size() == 2);
+        }
+        catch (const std::exception &err)
+        {
+            std::cerr << err.what() << std::endl;
+            std::cerr << program;
+            return 1;
+        }
+
+        for (auto &lib : libs)
+        {
+            if (!check_abi(lib))
+            {
+                KITTY_LOGE("Invalid ABI: %s", lib.c_str());
+                return 1;
+            }
+        }
+    }
+
+    KITTY_LOGI("======== INJECTION ARGS ========");
+    {
+        KITTY_LOGI("SELinux: %s", Utils::selinux_state_tostr(inj_cfg.selinux_state).c_str());
+        KITTY_LOGI("Arch: %s", EMachineToStr(kInjectorEM).c_str());
+        if (target_pid != 0)
+        {
+            KITTY_LOGI("ProcessId: %d", target_pid);
+        }
+        KITTY_LOGI("Package: %s", inj_cfg.package.c_str());
+        KITTY_LOGI("SDK: %d", inj_cfg.sdk);
+        KITTY_LOGI("Launch: %d", inj_cfg.launch ? 1 : 0);
+        KITTY_LOGI("Watch: %d", inj_cfg.watch ? 1 : 0);
+        KITTY_LOGI("Memfd: %d", inj_cfg.memfd ? 1 : 0);
+        KITTY_LOGI("Free: %d", inj_cfg.free);
+        KITTY_LOGI("Hide: %d", inj_cfg.hide ? 1 : 0);
+        KITTY_LOGI("Breakpoint-ld: %d", (inj_cfg.bp && inj_cfg.bp_args.empty()) ? 1 : 0);
+        KITTY_LOGI("Breakpoint-sym: %s",
+                   inj_cfg.bp_args.empty() ? "0"
+                                           : KittyUtils::String::fmt("[Bin=\"%s\"|Sym=\"%s\"]",
+                                                                     inj_cfg.bp_args[0].c_str(),
+                                                                     inj_cfg.bp_args[1].c_str())
+                                                 .c_str());
+        KITTY_LOGI("Delay: %dus", inj_cfg.delay);
+        KITTY_LOGI("Timeout: %dms", inj_cfg.timeout);
+        for (size_t i = 0; i < libs.size(); i++)
+        {
+            KITTY_LOGI("Library[%d]: %s", int(i + 1), libs[i].c_str());
+        }
+    }
+    KITTY_LOGI("================================");
+
+    std::vector<inject_elf_info_t> injected_libs_info = {};
+    bool injection_ok = false;
+    int final_pid = target_pid;
+
+    if (inj_cfg.launch || inj_cfg.watch)
+    {
+        KITTY_LOGI("Monitoring %s...", inj_cfg.package.c_str());
+
+        if (interactive) printProgress("Launching", 85);
+
+        injection_ok = inject_watch(libs, inj_cfg, &injected_libs_info);
+    }
+    else
+    {
+        if (inj_cfg.delay > 0)
+            SLEEP_MICROS(inj_cfg.delay);
+
+        int app_pid = target_pid != 0 ? target_pid : KittyMemoryEx::getProcessID(inj_cfg.package);
+        if (app_pid <= 0)
+        {
+            KITTY_LOGE("Couldn't find process ID of %s.", inj_cfg.package.c_str());
+            log_to_file("FAILED: process not found");
+            write_json_output(false, 0, inj_cfg.package, libs, 0, "process not found");
+            exit(1);
+        }
+        final_pid = app_pid;
+
+        if (!g_skip_check)
+        {
+            if (detect_anticheat(app_pid, g_anticheat_libs))
+            {
+                check_anticheat_threads(app_pid, g_anticheat_libs);
+                detect_hooks_in_lib(app_pid, g_anticheat_libs);
+            }
+        }
+
+        if (!check_tracer_pid(app_pid))
+        {
+            std::cout << "  " << COLOR_YELLOW << "⚠ " << COLOR_RESET << "Process is already traced!" << std::endl;
+            log_to_file("WARNING: process " + std::to_string(app_pid) + " already traced");
+        }
+
+        injection_ok = inject(app_pid, libs, inj_cfg, &injected_libs_info);
+    }
+
+    if (!injection_ok)
+    {
+        if (interactive) printProgress("Failed", 100);
+
+        KITTY_LOGE("Injection failed.");
+
+        if (inj_cfg.launch || inj_cfg.watch)
+        {
+            if (Utils::android_stop_app(inj_cfg.package))
+            {
+                KITTY_LOGI("Force stopped target process.");
+            }
+        }
+
+        if (interactive) printSummary(false, 0, 0);
+        write_json_output(false, final_pid, inj_cfg.package, libs, 0, "injection failed");
+        exit(1);
+    }
+
+    if (interactive) printProgress("Complete", 100);
+
+    KITTY_LOGI("Injected %d %s successfully.",
+               int(injected_libs_info.size()),
+               injected_libs_info.size() > 1 ? "libraries" : "library");
+
+    KITTY_LOGI("Injection succeeded.");
+
+    if (inj_ms.count() > 0)
+        KITTY_LOGI("Injection took %.2f MS.", inj_ms.count());
+
+    if (interactive && final_pid > 0)
+    {
+        for (const auto &lib : libs)
+        {
+            KITTY_LOGI("Remapping %s in PID %d...", lib.c_str(), final_pid);
+            remap_library(final_pid, lib);
+        }
+    }
+
+    if (interactive)
+    {
+        printSummary(true, (int)injected_libs_info.size(), inj_ms.count());
+    }
+
+    write_json_output(true, final_pid, inj_cfg.package, libs, inj_ms.count(), "");
+
+    return 0;
+}
+
+bool inject(int pid,
+            const std::vector<std::string> &libs,
+            inject_elf_config_t &cfg,
+            std::vector<inject_elf_info_t> *out)
+{
+    if (pid <= 0)
+    {
+        KITTY_LOGE("Invalid PID.");
+        return false;
+    }
+
+    KittyMemoryMgr kmgr{};
+
+    kmgr.trace = KittyTraceMgr(pid, 0, true);
+
+    errno = 0;
+    bool attached = cfg.seize = cfg.sdk >= 21 && kmgr.trace.seize(PTRACE_O_EXITKILL | PTRACE_O_TRACESYSGOOD);
+    if (!attached)
+    {
+        attached = kmgr.trace.attach(PTRACE_O_EXITKILL | PTRACE_O_TRACESYSGOOD);
+    }
+
+    if (!attached)
+    {
+        KITTY_LOGE("Failed to attach to target process.");
+        return false;
+    }
+
+    if (cfg.seize && !kmgr.trace.stop())
+    {
+        KITTY_LOGE("Failed to interrupt target process.");
+        kmgr.trace.detach();
+        return false;
+    }
+
+    KITTY_LOGI("Attached to target process successfully.");
+
+    KITTY_LOGI("Initializing Injector...");
+
+    bool isLocal64bit = !KittyMemoryEx::getMaps(getpid(), EProcMapFilter::Contains, "/lib64/").empty();
+    bool isRemote64bit = !KittyMemoryEx::getMaps(pid, EProcMapFilter::Contains, "/lib64/").empty();
+    if (isLocal64bit != isRemote64bit)
+    {
+        KITTY_LOGE("Injector is %sbit but target app is %sbit!",
+                   isLocal64bit ? "64" : "32",
+                   isRemote64bit ? "64" : "32");
+        kmgr.trace.detach();
+        return false;
+    }
+
+    KittyInjector injector{};
+    if (!kmgr.initialize(pid, EK_MEM_OP_SYSCALL, true) || !injector.init(&kmgr, cfg))
+    {
+        KITTY_LOGE("Couldn't initialize injector.");
+        kmgr.trace.detach();
+        return false;
+    }
+
+    KITTY_LOGI("Injector Initialized.");
+
+    bool emulate = false;
+    for (auto &it : libs)
+    {
+        if (!injector.validateElf(it, nullptr, emulate ? nullptr : &emulate))
+        {
+            KITTY_LOGI("Failed to validate [%s]!", it.c_str());
+            kmgr.trace.detach();
+            return false;
+        }
+    }
+
+    auto tm_start = std::chrono::high_resolution_clock::now();
+
+    if (cfg.bp || emulate)
+    {
+        if (!cfg.bp && emulate)
+        {
+            KITTY_LOGI("Checking NativeBridgestate...");
+
+            if (!injector.waitNbInit())
+            {
+                KITTY_LOGE("Failed to wait for NativeBridge initialization!");
+                return false;
+            }
+
+            KITTY_LOGI("NativeBridgeState checked successfully.");
+        }
+        else
+        {
+            KITTY_LOGI("Setting up breakpoint...");
+
+            if (!injector.waitBreakpoint(emulate))
+            {
+                KITTY_LOGE("Failed to wait for breakpoint!");
+                kmgr.trace.detach();
+                return false;
+            }
+
+            KITTY_LOGI("Breakpoint triggered successfully.");
+        }
+    }
+
+    std::string cmdline, ctx;
+    KittyIOFile::readFileToString(KittyUtils::String::fmt("/proc/%d/attr/current", pid), &ctx);
+    KittyIOFile::readFileToString(KittyUtils::String::fmt("/proc/%d/cmdline", pid), &cmdline);
+    KITTY_LOGI("Process current [cmdline=\"%s\" | context=\"%s\"].",
+               cmdline.empty() ? "" : cmdline.c_str(),
+               ctx.empty() ? "" : ctx.c_str());
+
+    for (auto &it : libs)
+    {
+        KITTY_LOGI("===== Injecting [%s]...", it.c_str());
+
+        auto info = injector.inject(it);
+        if (!info.is_valid())
+        {
+            KITTY_LOGE("===== Failed to inject [%s]!", it.c_str());
+            kmgr.trace.detach();
+            return false;
+        }
+
+        KITTY_LOGI("===== Successfully injected [%s].", it.c_str());
+
+        out->push_back(info);
+    }
+
+    inj_ms = std::chrono::high_resolution_clock::now() - tm_start;
+
+    if (!kmgr.trace.waitSyscall())
+    {
+        KITTY_LOGE("Failed to wait syscall for detach!");
+        return false;
+    }
+
+    if (!kmgr.trace.detach())
+    {
+        KITTY_LOGE("Failed to detach!");
+        return false;
+    }
+
+    KITTY_LOGI("Detached from target process successfully.");
+
+    return true;
+}
+
+bool inject_watch(const std::vector<std::string> &libs, inject_elf_config_t &cfg, std::vector<inject_elf_info_t> *out)
+{
+    bool result = false;
+    int pid = 0;
+    int launchTries = 0;
+    errno = 0;
+
+    auto launchFresh = [&cfg]() {
+        std::thread([&cfg]() -> void {
+            if (!KittyMemoryEx::getProcessIDs(cfg.package).empty())
+            {
+                Utils::android_stop_app(cfg.package);
+                SLEEP_SECONDS(1);
+            }
+            if (cfg.launch && !Utils::android_launch_app(cfg.package))
+            {
+                KITTY_LOGE("Failed to launch app [%s]!", cfg.package.c_str());
+                exit(1);
+            }
+        }).detach();
+    };
+
+    Utils::am_process_start_callback(
+        [&] { launchFresh(); },
+        [&](const android_event_am_proc_start *event) -> bool {
+            if (int(cfg.package.length()) != event->process_name.length)
+                return false;
+
+            if (strncmp(event->process_name.data, cfg.package.c_str(), cfg.package.length()))
+                return false;
+
+            pid = event->pid.data;
+
+            if (cfg.delay > 0)
+            {
+                KITTY_LOGI("Waiting for the delay...");
+                SLEEP_MICROS(cfg.delay);
+            }
+
+            if (!check_tracer_pid(pid))
+            {
+                KITTY_LOGW("Process %d is already traced!", pid);
+                log_to_file("WARNING: process " + std::to_string(pid) + " already traced");
+            }
+
+            auto spec_begin = std::chrono::steady_clock::now();
+            bool canLog = true;
+            while (true)
+            {
+                bool dead = kill(pid, 0) != 0;
+                bool stuck = std::chrono::steady_clock::now() - spec_begin > std::chrono::seconds(5);
+                if (dead || stuck)
+                {
+                    canLog = true;
+
+                    KITTY_LOGW("Process %d %s before injection, Still monitoring...", pid, dead ? "exited" : "stalled");
+
+                    pid = 0;
+
+                    if (cfg.launch && ++launchTries <= 5)
+                        launchFresh();
+
+                    return false;
+                }
+
+                if (cfg.selinux_state == SELinuxState::Disabled)
+                    break;
+
+                if (canLog)
+                {
+                    KITTY_LOGI("Waiting for app to leave zygote domain...");
+                    canLog = false;
+                }
+
+                if (Utils::is_app_specialized(pid))
+                    break;
+
+                sched_yield();
+            }
+
+            result = inject(pid, libs, cfg, out);
+
+            return true;
+        });
+
+    if (pid <= 0)
+    {
+        KITTY_LOGE("Failed to monitor process start. strerror=\"%s\".", strerror(errno));
+        exit(1);
+    }
+
+    return result;
+}
